@@ -38,6 +38,9 @@ describe("sub-composition dimensions", () => {
     expect(findings[0]?.severity).toBe("warning");
     expect(findings[0]?.fixHint).toContain("scale(2)");
     expect(findings[0]?.fixHint).toMatch(/transform-origin:\s*0\s+0/);
+    expect(findings[0]?.fixHint).toContain(
+      `style="${blockStyle}; transform: scale(2); transform-origin: 0 0"`,
+    );
   });
 
   it("stops warning after applying the documented scale and origin", async () => {
@@ -125,6 +128,23 @@ describe("sub-composition dimensions", () => {
     expect(await mismatchFindings(composition(mount(blockDimensions, style)))).toEqual([]);
   });
 
+  it.each([
+    "position: absolute; left: 0; top: 0; width: 100%; height: 100%",
+    "position: absolute; inset: 0",
+    "position: absolute; inset: 0px 0 0% 0",
+    "position: absolute; inset-block: 0; inset-inline: 0",
+    "position: absolute; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%",
+  ])("still warns when fill styles do not scale the inner canvas: %s", async (style) => {
+    expect(await mismatchFindings(composition(mount(blockDimensions, style)))).toHaveLength(1);
+  });
+
+  it("still warns when a stylesheet stretches the mount without scaling its canvas", async () => {
+    const css = "#title { position: absolute; inset: 0; width: 100%; height: 100%; }";
+    expect(
+      await mismatchFindings(composition(mount(blockDimensions, ""), undefined, css)),
+    ).toHaveLength(1);
+  });
+
   it("does not override dimensions set by a stylesheet", async () => {
     const css = "#title { width: 3840px !important; height: 2160px !important; }";
     expect(await mismatchFindings(composition(mount(), undefined, css))).toEqual([]);
@@ -158,6 +178,34 @@ describe("sub-composition dimensions", () => {
       "</body>",
       '<script>gsap.set("#title", { scale: 2, transformOrigin: "0 0" });</script></body>',
     );
+    expect(await mismatchFindings(html)).toEqual([]);
+  });
+
+  it.each([
+    'document.title = "Clip"; tl.from("#headline", { x: -40 });',
+    'gsap.set("#title", { opacity: 0 }); gsap.to("#headline", { x: 20 });',
+    "const example = 'gsap.set(\"#title\", { scale: 2 })';",
+    '// gsap.set("#title", { scale: 2 });',
+    'document.getElementById("title").textContent = "scale";',
+    'document.querySelector("#title span").style.width = "20px";',
+    'const sizes = new Map(); sizes.set("#title", { width: 100 });',
+    'const store = { to() {} }; store.to("#title", { x: 120 });',
+  ])("does not infer mount layout from unrelated script text: %s", async (script) => {
+    const html = composition().replace("</body>", `<script>${script}</script></body>`);
+    expect(await mismatchFindings(html)).toHaveLength(1);
+  });
+
+  it.each([
+    'gsap.to("#title", { scale: 2 });',
+    'gsap.fromTo("#title", { scale: 1 }, { scale: 2 });',
+    'gsap.set("[data-composition-src]", { css: { transform: "scale(2)" } });',
+    'gsap.set(document.getElementById("title"), { scale: 2 });',
+    'const tl = gsap.timeline({ paused: true }); tl.to("#title", { x: 120 });',
+    'gsap.timeline({ paused: true }).to("#title", { scale: 2 });',
+    'document.getElementById("title").style.transform = "scale(2)";',
+    'document.querySelector("#title").style.setProperty("transform", "scale(2)");',
+  ])("respects layout writes targeting the mount: %s", async (script) => {
+    const html = composition().replace("</body>", `<script>${script}</script></body>`);
     expect(await mismatchFindings(html)).toEqual([]);
   });
 
